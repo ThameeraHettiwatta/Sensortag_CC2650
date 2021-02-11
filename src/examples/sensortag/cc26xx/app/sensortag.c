@@ -111,7 +111,7 @@ static uint8_t sensorData[18];
  */
 
 // How often to perform periodic event (in milliseconds)
-#define ST_PERIODIC_EVT_PERIOD               50                    //modified
+#define ST_PERIODIC_EVT_PERIOD               100                    //modified
 
 // What is the advertising interval when device is discoverable
 // (units of 625us, 160=100ms)
@@ -227,6 +227,12 @@ static uint16_t events;
 // self-test result
 static uint8_t selfTestMap;
 
+// imu 9250 calibration parameters x,y,z axis
+uint16_t S[3] = {983, 982, 967};
+uint8_t b_acc[3] = {30, 37, 27};    //(-30, 37, -27)
+uint8_t b_gyro[3] = {183, 68, 25};
+
+
 // GAP - SCAN RSP data (max size = 31 bytes)
 static uint8_t scanRspData[] =
 {
@@ -261,16 +267,6 @@ static uint8_t advertData[] =
   // Flags; this sets the device to use limited discoverable
   // mode (advertises for 30 seconds at a time) instead of general
   // discoverable mode (advertises indefinitely)
-//  0x02,   // length of this data
-//  GAP_ADTYPE_FLAGS,
-//  DEFAULT_DISCOVERABLE_MODE | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED,             //modified
- // Manufacturer specific advertising data
-//  0x06,
-//  GAP_ADTYPE_MANUFACTURER_SPECIFIC,
-//  LO_UINT16(TI_COMPANY_ID),
-//  HI_UINT16(TI_COMPANY_ID),
-//  TI_ST_DEVICE_ID,
-//  TI_ST_KEY_DATA_ID,
 
 // length of data payload
   0x016,
@@ -281,21 +277,12 @@ static uint8_t advertData[] =
 //sequence number
   0x00,
 
-
-//  network id
-//  0x01,
-//  0xb1,
-
-//   service UUID, to notify central devices what services are included
-//   in this peripheral
-//  0x02,   // length of this data
-//  GAP_ADTYPE_16BIT_MORE,      // some of the UUID's, but not all
+//Device id
   LO_UINT16(BATT_SERV_UUID),
   HI_UINT16(BATT_SERV_UUID),
 
 //  sensor data
-//  accelerometer 6, gyroscope 6, magnatometer 6
-//  0x12,
+//  accelerometer 6, gyroscope 6, magnetometer 6
   0x00,
   0x00,
   0x00,
@@ -598,6 +585,16 @@ static void SensorTag_init(void)
 
   // Enable interrupt handling for keys and relay
   PIN_registerIntCb(hGpioPin, SensorTag_callback);
+
+  // MPU9250 power on and initialization
+  SensorMpu9250_powerOn();
+  if(SensorMpu9250_powerIsOn())
+  {
+      //Enable accelerometer, gyroscope and magnetometer
+      SensorMpu9250_enable(0x7F);
+      //Set accelerometer range
+      SensorMpu9250_accSetRange(ACC_RANGE_16G);
+  }
 }
 
 /*******************************************************************************
@@ -682,32 +679,47 @@ static void SensorTag_taskFxn(UArg a0, UArg a1)
 
       if (gapProfileState == GAPROLE_ADVERTISING)
       {
-//          SensorTagMov_processCharChangeEvt(1);
-          SensorMpu9250_powerOn();
           if(SensorMpu9250_powerIsOn())
-          {
-//              System_printf("Test\n");
-//              SensorMpu9250_init();
-//              SensorMpu9250_test();
-              SensorMpu9250_enable(0x7F);
-              SensorMpu9250_accSetRange(ACC_RANGE_16G);
-              DELAY_MS(5);
+          {//Read accelerometer gyroscope and magnetometer
               SensorMpu9250_accRead((uint16_t*)&sensorData);
               SensorMpu9250_gyroRead((uint16_t*)&sensorData[6]);
               uint8_t status = SensorMpu9250_magRead((int16_t*)&sensorData[12]);
-              SensorMpu9250_reset();
           }
+
+          //Calibrate the values using predefined calibration parameters
+          uint16_t acc_d[3];
+          uint16_t gyro_d[3];
+          acc_d[0] = ((((uint16_t)sensorData[1] << 8) | sensorData[0]) - b_acc[0]);
+          acc_d[1] = ((((uint16_t)sensorData[3] << 8) | sensorData[2]) + b_acc[1]);
+          acc_d[2] = ((((uint16_t)sensorData[5] << 8) | sensorData[4]) - b_acc[2]);
+
+          gyro_d[0] = ((((uint16_t)sensorData[7] << 8) | sensorData[6]) + b_gyro[0]);
+          gyro_d[1] = ((((uint16_t)sensorData[9] << 8) | sensorData[8]) - b_gyro[1]);
+          gyro_d[2] = ((((uint16_t)sensorData[11] << 8) | sensorData[10]) - b_gyro[2]);
+
+          //Convert 16bit to 8bit
+          for (int j = 0; j < 3; j++)
+          {
+              sensorData[j*2] = acc_d[j];
+              sensorData[j*2+1] = acc_d[j] >> 8;
+              sensorData[j*2 + 6] = gyro_d[j];
+              sensorData[j*2 + 7] = gyro_d[j] >> 8;
+          }
+
+          //Update advertise data
           int i;
           for (i = 0; i < 18; i++)
           {
               advertData[5 + i] = sensorData[i];
           }
 
+          //Reset sequence number
           if( seq_no == 0xFF)  seq_no = 0;
           else seq_no++;
 
           advertData[2] = seq_no;
 
+          //Set parameters for GAP advertise data
           GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
       }
 

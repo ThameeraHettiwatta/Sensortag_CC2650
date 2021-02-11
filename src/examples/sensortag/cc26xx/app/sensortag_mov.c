@@ -390,7 +390,7 @@ void SensorTagMov_processCharChangeEvt(uint8_t paramID)
 void SensorTagMov_reset(void)
 {
   initCharacteristicValue(SENSOR_DATA, 0, SENSOR_DATA_LEN);
-  mpuConfig = ST_CFG_SENSOR_DISABLE | (ACC_RANGE_8G << 8);
+  mpuConfig = ST_CFG_SENSOR_DISABLE | (ACC_RANGE_16G << 8);
   Movement_setParameter(SENSOR_CONF, sizeof(mpuConfig), (uint8_t*)&mpuConfig);
 
   // Remove power from the MPU
